@@ -5,8 +5,13 @@ A desktop app for reading complex PDFs with AI-powered explanations.
 
 import sys
 import os
+import re
+import io
+import json
+import hashlib
 from pathlib import Path
 from typing import Optional
+from datetime import datetime, timedelta
 import fitz  # PyMuPDF
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -22,19 +27,105 @@ from PyQt6.QtGui import (
 from google import genai
 from google.genai import types
 
+MODEL = "gemini-3-flash-preview"
+CACHE_FILE = Path(__file__).parent / ".file_cache.json"
+CACHE_EXPIRY_HOURS = 47  # Files API keeps files for 48 hours, we use 47 to be safe
+
+
+def get_file_hash(file_path: str) -> str:
+    """Get MD5 hash of a file to identify it uniquely."""
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+
+def load_file_cache() -> dict:
+    """Load the file upload cache from disk."""
+    if CACHE_FILE.exists():
+        try:
+            with open(CACHE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_file_cache(cache: dict):
+    """Save the file upload cache to disk."""
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump(cache, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Failed to save file cache: {e}")
+
+def markdown_to_html(text: str) -> str:
+    """Convert simple markdown to HTML."""
+    # Escape HTML
+    text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    
+    # Bold
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    
+    # Italic
+    text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
+    
+    # Code blocks
+    text = re.sub(r'```([\s\S]+?)```', r'<pre style="background-color: #2a2a2a; padding: 8px; border-radius: 4px; overflow-x: auto;">\1</pre>', text)
+    
+    # Inline code
+    text = re.sub(r'`(.+?)`', r'<code style="background-color: #2a2a2a; padding: 2px 4px; border-radius: 3px;">\1</code>', text)
+    
+    # Headers
+    text = re.sub(r'^### (.+)$', r'<h3 style="color: #4a9eff; margin-top: 12px;">\1</h3>', text, flags=re.MULTILINE)
+    text = re.sub(r'^## (.+)$', r'<h2 style="color: #4a9eff; margin-top: 12px;">\1</h2>', text, flags=re.MULTILINE)
+    text = re.sub(r'^# (.+)$', r'<h1 style="color: #4a9eff; margin-top: 12px;">\1</h1>', text, flags=re.MULTILINE)
+    
+    # Bullet lists
+    lines = text.split('\n')
+    in_list = False
+    result = []
+    for line in lines:
+        if line.strip().startswith(('- ', '* ', '• ')):
+            if not in_list:
+                result.append('<ul style="margin: 8px 0;">')
+                in_list = True
+            item = line.strip()[2:].strip()
+            result.append(f'<li>{item}</li>')
+        else:
+            if in_list:
+                result.append('</ul>')
+                in_list = False
+            result.append(line)
+    if in_list:
+        result.append('</ul>')
+    text = '\n'.join(result)
+    
+    # Numbered lists
+    text = re.sub(r'^(\d+)\. (.+)$', r'<div style="margin-left: 20px;"><b>\1.</b> \2</div>', text, flags=re.MULTILINE)
+    
+    # Line breaks
+    text = text.replace('\n\n', '<br><br>')
+    text = text.replace('\n', '<br>')
+    
+    return text
+
 
 class GeminiWorker(QThread):
     """Background worker for Gemini API calls with streaming."""
     chunk_received = pyqtSignal(str)
-    finished_response = pyqtSignal()
+    finished_response = pyqtSignal(str)  # Emit full response for history
     error_occurred = pyqtSignal(str)
     
-    def __init__(self, client, chat, message: str, pdf_bytes: Optional[bytes] = None):
+    def __init__(self, client, message: str, uploaded_file=None,
+                 conversation_history: list = None, system_instruction: str = ""):
         super().__init__()
         self.client = client
-        self.chat = chat
         self.message = message
-        self.pdf_bytes = pdf_bytes
+        self.uploaded_file = uploaded_file  # File reference from Files API
+        self.conversation_history = conversation_history or []
+        self.system_instruction = system_instruction
         self._is_cancelled = False
     
     def cancel(self):
@@ -42,37 +133,43 @@ class GeminiWorker(QThread):
     
     def run(self):
         try:
-            if self.chat:
-                # Use existing chat session with streaming
-                response = self.chat.send_message_stream(self.message)
-                for chunk in response:
-                    if self._is_cancelled:
-                        break
-                    if chunk.text:
-                        self.chunk_received.emit(chunk.text)
-            else:
-                # Initial document understanding call
-                contents = []
-                if self.pdf_bytes:
-                    contents.append(
-                        types.Part.from_bytes(
-                            data=self.pdf_bytes,
-                            mime_type='application/pdf',
-                        )
-                    )
-                contents.append(self.message)
-                
-                response = self.client.models.generate_content_stream(
-                    model="gemini-3-flash-preview",
-                    contents=contents
-                )
-                for chunk in response:
-                    if self._is_cancelled:
-                        break
-                    if chunk.text:
-                        self.chunk_received.emit(chunk.text)
+            # Build contents with uploaded file reference and conversation history
+            contents = []
             
-            self.finished_response.emit()
+            # Add uploaded file reference (not raw bytes - much more efficient!)
+            if self.uploaded_file:
+                contents.append(self.uploaded_file)
+            
+            # Add conversation history for context (excluding current message)
+            history_text = ""
+            for msg in self.conversation_history[:-1]:  # Exclude current message
+                role = "User" if msg["role"] == "user" else "Assistant"
+                history_text += f"{role}: {msg['content']}\n\n"
+            
+            if history_text:
+                contents.append(f"Previous conversation:\n{history_text}")
+            
+            # Add current message
+            contents.append(f"Current question: {self.message}")
+            
+            # Make the API call with streaming
+            response = self.client.models.generate_content_stream(
+                model=MODEL,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=self.system_instruction
+                ) if self.system_instruction else None
+            )
+            
+            full_response = ""
+            for chunk in response:
+                if self._is_cancelled:
+                    break
+                if chunk.text:
+                    full_response += chunk.text
+                    self.chunk_received.emit(chunk.text)
+            
+            self.finished_response.emit(full_response)
         except Exception as e:
             self.error_occurred.emit(str(e))
 
@@ -329,22 +426,40 @@ class ChatPanel(QWidget):
     
     def add_ai_message_start(self):
         self.chat_display.append(f'<div style="color: #28a745; margin: 8px 0;"><b>AI Assistant:</b></div>')
-        self.chat_display.append('<div style="margin-left: 12px;">')
+        self.current_message = ""  # Accumulate chunks
+        # Store the HTML before we start adding chunks
+        self.html_before_message = self.chat_display.toHtml()
     
     def add_ai_chunk(self, text: str):
-        cursor = self.chat_display.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(text)
-        self.chat_display.setTextCursor(cursor)
+        # Accumulate the chunk
+        self.current_message += text
+        
+        # Convert current accumulated message to HTML
+        html_content = markdown_to_html(self.current_message)
+        
+        # Replace entire HTML with base + new formatted content
+        # This prevents duplication by always starting from the saved state
+        self.chat_display.setHtml(self.html_before_message)
+        self.chat_display.append(f'<div style="margin-left: 12px;">{html_content}</div>')
+        
+        # Scroll to bottom
         self.chat_display.verticalScrollBar().setValue(
             self.chat_display.verticalScrollBar().maximum()
         )
     
     def add_ai_message_end(self):
-        self.chat_display.append('</div><br>')
+        # Final render with proper formatting
+        html_content = markdown_to_html(self.current_message)
+        
+        # Final update from the saved state
+        self.chat_display.setHtml(self.html_before_message)
+        self.chat_display.append(f'<div style="margin-left: 12px;">{html_content}</div><br>')
+        
         self.chat_display.verticalScrollBar().setValue(
             self.chat_display.verticalScrollBar().maximum()
         )
+        self.current_message = ""
+        self.html_before_message = ""
     
     def set_status(self, text: str):
         self.status_label.setText(text)
@@ -555,17 +670,67 @@ class PDFReaderHelper(QMainWindow):
         if file_path:
             try:
                 self.doc = fitz.open(file_path)
-                self.pdf_bytes = Path(file_path).read_bytes()
                 self.current_page = 0
                 self.render_page()
                 self.update_page_label()
                 
-                # Reset chat for new document
-                self.gemini_chat = None
+                # Check cache for existing upload
+                file_hash = get_file_hash(file_path)
+                cache = load_file_cache()
+                cached_entry = cache.get(file_hash)
+                
+                self.uploaded_file = None
+                
+                # Check if we have a valid cached upload
+                if cached_entry:
+                    cached_time = datetime.fromisoformat(cached_entry["upload_time"])
+                    if datetime.now() - cached_time < timedelta(hours=CACHE_EXPIRY_HOURS):
+                        # Try to get the cached file from Gemini
+                        try:
+                            self.chat_panel.set_status("Using cached upload...")
+                            self.uploaded_file = self.gemini_client.files.get(
+                                name=cached_entry["file_name"]
+                            )
+                            print(f"Using cached file: {self.uploaded_file.name}")
+                        except Exception as e:
+                            print(f"Cached file expired or invalid: {e}")
+                            self.uploaded_file = None
+                            # Remove invalid cache entry
+                            del cache[file_hash]
+                            save_file_cache(cache)
+                
+                # Upload if not cached or cache invalid
+                if not self.uploaded_file:
+                    self.chat_panel.set_status("Uploading document to Gemini...")
+                    try:
+                        pdf_bytes = Path(file_path).read_bytes()
+                        pdf_io = io.BytesIO(pdf_bytes)
+                        self.uploaded_file = self.gemini_client.files.upload(
+                            file=pdf_io,
+                            config={"mime_type": "application/pdf"}
+                        )
+                        print(f"Uploaded file: {self.uploaded_file.name}")
+                        
+                        # Save to cache
+                        cache[file_hash] = {
+                            "file_name": self.uploaded_file.name,
+                            "upload_time": datetime.now().isoformat(),
+                            "original_path": file_path
+                        }
+                        save_file_cache(cache)
+                    except Exception as e:
+                        print(f"Warning: Failed to upload to Files API: {e}")
+                        self.uploaded_file = None
+                
+                # Initialize chat with document context
+                self.conversation_history = []  # Reset history for new document
+                self.init_chat_with_document()
                 self.chat_panel.chat_display.clear()
                 self.chat_panel.add_ai_message_start()
+                
+                cache_status = "(cached)" if cached_entry and self.uploaded_file else "(uploaded)"
                 self.chat_panel.add_ai_chunk(
-                    f"📄 Loaded: {Path(file_path).name}\n\n"
+                    f"📄 Loaded: {Path(file_path).name} {cache_status}\n\n"
                     "I'm ready to help you understand this document. You can:\n"
                     "• Select any text and click 'Explain This'\n"
                     "• Ask me questions in the chat\n"
@@ -648,7 +813,7 @@ Provide a clear, beginner-friendly explanation. If it contains technical terms, 
     
     def analyze_document(self):
         """Analyze the entire document."""
-        if not self.pdf_bytes:
+        if not getattr(self, 'uploaded_file', None):
             QMessageBox.warning(self, "No Document", "Please open a PDF first.")
             return
         
@@ -684,6 +849,24 @@ List the most important 5-10 terms."""
         
         self.send_to_gemini(prompt, display_text=f"Find complex terms on page {self.current_page + 1}")
     
+    def init_chat_with_document(self):
+        """Initialize chat session with document context."""
+        if not self.gemini_client or not self.uploaded_file:
+            return
+        
+        self.system_instruction = """You are a helpful reading assistant. Your job is to help users understand complex documents, papers, and books. 
+
+Key behaviors:
+- Explain concepts in simple, accessible language
+- Define technical terms when they appear
+- Use analogies and real-world examples
+- Be concise but thorough
+- If asked to simplify, really dumb it down - assume zero background knowledge
+- Reference specific parts of the document when relevant
+- You have access to the full document - use it to provide context-aware answers"""
+        
+        self.document_initialized = True
+    
     def send_to_gemini(self, prompt: str, display_text: str = None, include_pdf: bool = False):
         """Send a message to Gemini with streaming response."""
         if not self.gemini_client:
@@ -704,33 +887,20 @@ List the most important 5-10 terms."""
         self.chat_panel.set_status("Thinking...")
         self.chat_panel.set_buttons_enabled(False)
         
-        # Create chat session if needed
-        if self.gemini_chat is None and self.pdf_bytes:
-            # First message: include document context
-            system_instruction = """You are a helpful reading assistant. Your job is to help users understand complex documents, papers, and books. 
-
-Key behaviors:
-- Explain concepts in simple, accessible language
-- Define technical terms when they appear
-- Use analogies and real-world examples
-- Be concise but thorough
-- If asked to simplify, really dumb it down - assume zero background knowledge
-- Reference specific parts of the document when relevant"""
-            
-            self.gemini_chat = self.gemini_client.chats.create(
-                model="gemini-3-flash-preview",
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction
-                )
-            )
+        # Build conversation history for context
+        if not hasattr(self, 'conversation_history'):
+            self.conversation_history = []
         
-        # Send request
-        pdf_to_send = self.pdf_bytes if include_pdf else None
+        # Add current prompt to history
+        self.conversation_history.append({"role": "user", "content": prompt})
+        
+        # Send request with uploaded file reference (efficient - no re-upload!)
         self.current_worker = GeminiWorker(
             self.gemini_client,
-            self.gemini_chat,
             prompt,
-            pdf_to_send
+            getattr(self, 'uploaded_file', None),  # Use uploaded file reference
+            self.conversation_history,
+            getattr(self, 'system_instruction', '')
         )
         self.current_worker.chunk_received.connect(self.on_chunk_received)
         self.current_worker.finished_response.connect(self.on_response_finished)
@@ -741,11 +911,15 @@ Key behaviors:
         """Handle streaming chunk."""
         self.chat_panel.add_ai_chunk(text)
     
-    def on_response_finished(self):
+    def on_response_finished(self, full_response: str):
         """Handle completed response."""
         self.chat_panel.add_ai_message_end()
         self.chat_panel.set_status("")
         self.chat_panel.set_buttons_enabled(True)
+        
+        # Save response to conversation history
+        if hasattr(self, 'conversation_history'):
+            self.conversation_history.append({"role": "assistant", "content": full_response})
     
     def on_error(self, error: str):
         """Handle API error."""
