@@ -2,6 +2,8 @@
 
 Desktop application for reading PDFs with integrated Gemini AI explanations. Built with PyQt6.
 
+This was inspired by Andrej Karpathy's https://github.com/karpathy/reader3.git with a different way to do things. This is a fully local desktop application with a tiny chat window on the side (currently only has support for Gemini with document understanding and file upload) with shortcuts to send pdf content to chat and preset prompts. This was created more in mind to read scientific papers for research and not books as such (Karpathy's version might be better for books). License is MIT, GPL, all of that. I won't sue. I would be happy to collaborate on its development however, so feel free to open issues/PRs.
+
 ## Features
 
 **PDF Viewing**
