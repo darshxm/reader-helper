@@ -1,35 +1,686 @@
 """
 PDF Reader Helper with Gemini AI Integration
 A desktop app for reading complex PDFs with AI-powered explanations.
-
-Main application window and entry point.
 """
 
 import sys
 import os
+import re
 import io
+import json
+import hashlib
 from pathlib import Path
+from typing import Optional
 from datetime import datetime, timedelta
-
 import fitz  # PyMuPDF
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QScrollArea, QLabel, QPushButton, QFileDialog, 
-    QToolBar, QSpinBox, QMessageBox, QComboBox, QTabWidget
+    QSplitter, QScrollArea, QLabel, QPushButton, QTextEdit,
+    QFileDialog, QToolBar, QSpinBox, QMessageBox, QFrame,
+    QToolTip, QMenu, QComboBox, QTabWidget
 )
-from PyQt6.QtCore import Qt, QTimer, QPoint
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint, QTimer, QRect
+from PyQt6.QtGui import (
+    QPixmap, QImage, QAction, QCursor, QFont, QTextCursor,
+    QPainter, QColor, QPen
+)
 from google import genai
+from google.genai import types
 
-from utils import (
-    load_config, save_config, load_notes, save_notes,
-    load_chat_history, save_chat_history, load_file_cache, 
-    save_file_cache, get_file_hash, MODEL, AVAILABLE_MODELS, 
-    CACHE_EXPIRY_HOURS
-)
-from gemini_worker import GeminiWorker
-from widgets import PDFPageWidget, SelectionPopup
-from panels import NotesPanel, ChatPanel
+MODEL = "gemini-3-flash-preview"  # Default model
+AVAILABLE_MODELS = [
+    "gemini-3-flash-preview",
+    "gemini-3-pro-preview",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-pro"
+]
+CACHE_FILE = Path(__file__).parent / ".file_cache.json"
+CONFIG_FILE = Path(__file__).parent / ".config.json"
+NOTES_FILE = Path(__file__).parent / ".notes.json"
+CHAT_HISTORY_FILE = Path(__file__).parent / ".chat_history.json"
+CACHE_EXPIRY_HOURS = 47  # Files API keeps files for 48 hours, we use 47 to be safe
+
+
+def get_file_hash(file_path: str) -> str:
+    """Get MD5 hash of a file to identify it uniquely."""
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+
+def load_file_cache() -> dict:
+    """Load the file upload cache from disk."""
+    if CACHE_FILE.exists():
+        try:
+            with open(CACHE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_file_cache(cache: dict):
+    """Save the file upload cache to disk."""
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump(cache, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Failed to save file cache: {e}")
+
+
+def load_config() -> dict:
+    """Load user configuration from disk."""
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_config(config: dict):
+    """Save user configuration to disk."""
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(config, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Failed to save config: {e}")
+
+
+def load_notes() -> dict:
+    """Load all PDF notes from disk."""
+    if NOTES_FILE.exists():
+        try:
+            with open(NOTES_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_notes(notes: dict):
+    """Save all PDF notes to disk."""
+    try:
+        with open(NOTES_FILE, "w") as f:
+            json.dump(notes, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Failed to save notes: {e}")
+
+
+def load_chat_history() -> dict:
+    """Load all PDF chat histories from disk."""
+    if CHAT_HISTORY_FILE.exists():
+        try:
+            with open(CHAT_HISTORY_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_chat_history(chat_history: dict):
+    """Save all PDF chat histories to disk."""
+    try:
+        with open(CHAT_HISTORY_FILE, "w") as f:
+            json.dump(chat_history, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Failed to save chat history: {e}")
+
+def markdown_to_html(text: str) -> str:
+    """Convert simple markdown to HTML."""
+    # Escape HTML
+    text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    
+    # Bold
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    
+    # Italic
+    text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
+    
+    # Code blocks
+    text = re.sub(r'```([\s\S]+?)```', r'<pre style="background-color: #2a2a2a; padding: 8px; border-radius: 4px; overflow-x: auto;">\1</pre>', text)
+    
+    # Inline code
+    text = re.sub(r'`(.+?)`', r'<code style="background-color: #2a2a2a; padding: 2px 4px; border-radius: 3px;">\1</code>', text)
+    
+    # Headers
+    text = re.sub(r'^### (.+)$', r'<h3 style="color: #4a9eff; margin-top: 12px;">\1</h3>', text, flags=re.MULTILINE)
+    text = re.sub(r'^## (.+)$', r'<h2 style="color: #4a9eff; margin-top: 12px;">\1</h2>', text, flags=re.MULTILINE)
+    text = re.sub(r'^# (.+)$', r'<h1 style="color: #4a9eff; margin-top: 12px;">\1</h1>', text, flags=re.MULTILINE)
+    
+    # Bullet lists
+    lines = text.split('\n')
+    in_list = False
+    result = []
+    for line in lines:
+        if line.strip().startswith(('- ', '* ', '• ')):
+            if not in_list:
+                result.append('<ul style="margin: 8px 0;">')
+                in_list = True
+            item = line.strip()[2:].strip()
+            result.append(f'<li>{item}</li>')
+        else:
+            if in_list:
+                result.append('</ul>')
+                in_list = False
+            result.append(line)
+    if in_list:
+        result.append('</ul>')
+    text = '\n'.join(result)
+    
+    # Numbered lists
+    text = re.sub(r'^(\d+)\. (.+)$', r'<div style="margin-left: 20px;"><b>\1.</b> \2</div>', text, flags=re.MULTILINE)
+    
+    # Line breaks
+    text = text.replace('\n\n', '<br><br>')
+    text = text.replace('\n', '<br>')
+    
+    return text
+
+
+class GeminiWorker(QThread):
+    """Background worker for Gemini API calls with streaming."""
+    chunk_received = pyqtSignal(str)
+    finished_response = pyqtSignal(str)  # Emit full response for history
+    error_occurred = pyqtSignal(str)
+    
+    def __init__(self, client, message: str, model: str = MODEL,
+                 uploaded_file=None, conversation_history: list = None,
+                 system_instruction: str = ""):
+        super().__init__()
+        self.client = client
+        self.message = message
+        self.model = model
+        self.uploaded_file = uploaded_file  # File reference from Files API
+        self.conversation_history = conversation_history or []
+        self.system_instruction = system_instruction
+        self._is_cancelled = False
+    
+    def cancel(self):
+        self._is_cancelled = True
+    
+    def run(self):
+        try:
+            # Build contents with uploaded file reference and conversation history
+            contents = []
+            
+            # Add uploaded file reference (not raw bytes - much more efficient!)
+            if self.uploaded_file:
+                contents.append(self.uploaded_file)
+            
+            # Add conversation history for context (excluding current message)
+            history_text = ""
+            for msg in self.conversation_history[:-1]:  # Exclude current message
+                role = "User" if msg["role"] == "user" else "Assistant"
+                history_text += f"{role}: {msg['content']}\n\n"
+            
+            if history_text:
+                contents.append(f"Previous conversation:\n{history_text}")
+            
+            # Add current message
+            contents.append(f"Current question: {self.message}")
+            
+            # Make the API call with streaming
+            response = self.client.models.generate_content_stream(
+                model=self.model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=self.system_instruction
+                ) if self.system_instruction else None
+            )
+            
+            full_response = ""
+            for chunk in response:
+                if self._is_cancelled:
+                    break
+                if chunk.text:
+                    full_response += chunk.text
+                    self.chunk_received.emit(chunk.text)
+            
+            self.finished_response.emit(full_response)
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+
+class PDFPageWidget(QLabel):
+    """Widget to display a single PDF page with text selection support."""
+    text_selected = pyqtSignal(str, QPoint)  # Selected text and position
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMouseTracking(True)
+        self.page = None
+        self.zoom = 1.5
+        self.selection_start = None
+        self.selection_end = None
+        self.selected_text = ""
+        self.text_blocks = []  # Store text positions for hover detection
+        self.complex_terms = []  # Terms detected as complex
+        
+    def set_page(self, page: fitz.Page, zoom: float = 1.5):
+        """Render and display a PDF page."""
+        self.page = page
+        self.zoom = zoom
+        self.selection_start = None
+        self.selection_end = None
+        self.selected_text = ""
+        
+        # Render page to pixmap
+        mat = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=mat)
+        
+        # Convert to QImage
+        img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(img)
+        
+        self.setPixmap(pixmap)
+        self.setFixedSize(pixmap.size())
+        
+        # Extract text blocks for hover tooltips
+        self.text_blocks = page.get_text("dict")["blocks"]
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.page:
+            self.selection_start = event.pos()
+            self.selection_end = None
+    
+    def mouseMoveEvent(self, event):
+        if self.selection_start and event.buttons() == Qt.MouseButton.LeftButton:
+            self.selection_end = event.pos()
+            self.update()
+    
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.page and self.selection_start:
+            self.selection_end = event.pos()
+            
+            # Convert screen coordinates to PDF coordinates
+            x0 = min(self.selection_start.x(), self.selection_end.x()) / self.zoom
+            y0 = min(self.selection_start.y(), self.selection_end.y()) / self.zoom
+            x1 = max(self.selection_start.x(), self.selection_end.x()) / self.zoom
+            y1 = max(self.selection_start.y(), self.selection_end.y()) / self.zoom
+            
+            # Extract text from selection rectangle
+            rect = fitz.Rect(x0, y0, x1, y1)
+            self.selected_text = self.page.get_text("text", clip=rect).strip()
+            
+            if self.selected_text:
+                # Emit signal with text and position for popup button
+                self.text_selected.emit(self.selected_text, event.globalPosition().toPoint())
+    
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        
+        # Draw selection rectangle
+        if self.selection_start and self.selection_end:
+            painter = QPainter(self)
+            painter.setPen(QPen(QColor(0, 120, 215), 2))
+            painter.setBrush(QColor(0, 120, 215, 50))
+            
+            rect = QRect(self.selection_start, self.selection_end).normalized()
+            painter.drawRect(rect)
+            painter.end()
+
+
+class SelectionPopup(QFrame):
+    """Popup button that appears when text is selected."""
+    explain_clicked = pyqtSignal(str)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setStyleSheet("""
+            QFrame {
+                background-color: #2d2d2d;
+                border: 1px solid #555;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QPushButton {
+                background-color: #4a9eff;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #3a8eef;
+            }
+        """)
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        
+        self.explain_btn = QPushButton("🤖 Explain This")
+        self.explain_btn.clicked.connect(self._on_explain)
+        layout.addWidget(self.explain_btn)
+        
+        self.selected_text = ""
+    
+    def show_at(self, text: str, pos: QPoint):
+        self.selected_text = text
+        self.move(pos.x() - self.width() // 2, pos.y() + 10)
+        self.show()
+    
+    def _on_explain(self):
+        self.hide()
+        self.explain_clicked.emit(self.selected_text)
+
+
+class NotesPanel(QWidget):
+    """Notes panel for taking PDF-specific notes."""
+    notes_changed = pyqtSignal(str)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
+        self._save_timer = QTimer()
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self._emit_notes_changed)
+    
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        
+        # Header
+        header = QLabel("📝 My Notes")
+        header.setStyleSheet("font-size: 16px; font-weight: bold; padding: 8px;")
+        layout.addWidget(header)
+        
+        # Info label
+        info = QLabel("Notes are automatically saved for this PDF")
+        info.setStyleSheet("color: #888; font-size: 12px; padding: 0 8px 8px 8px;")
+        layout.addWidget(info)
+        
+        # Notes editor
+        self.notes_editor = QTextEdit()
+        self.notes_editor.setPlaceholderText(
+            "Take notes here...\n\n"
+            "• Jot down key insights\n"
+            "• Questions to explore\n"
+            "• Important concepts\n"
+            "• Your thoughts and reflections"
+        )
+        self.notes_editor.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #e0e0e0;
+                border: 1px solid #333;
+                border-radius: 8px;
+                padding: 12px;
+                font-size: 14px;
+                font-family: 'Courier New', monospace;
+            }
+        """)
+        self.notes_editor.textChanged.connect(self._on_text_changed)
+        layout.addWidget(self.notes_editor)
+        
+        # Status label
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("color: #888; font-size: 11px; padding: 4px 8px;")
+        layout.addWidget(self.status_label)
+    
+    def _on_text_changed(self):
+        """Debounce text changes before saving."""
+        self._save_timer.stop()
+        self._save_timer.start(1000)  # Save after 1 second of inactivity
+        self.status_label.setText("Unsaved changes...")
+    
+    def _emit_notes_changed(self):
+        """Emit signal with current notes content."""
+        self.notes_changed.emit(self.notes_editor.toPlainText())
+        self.status_label.setText("✓ Saved")
+        QTimer.singleShot(2000, lambda: self.status_label.setText(""))
+    
+    def set_notes(self, text: str):
+        """Load notes into the editor."""
+        self.notes_editor.blockSignals(True)  # Prevent triggering save
+        self.notes_editor.setPlainText(text)
+        self.notes_editor.blockSignals(False)
+        self.status_label.setText("")
+    
+    def get_notes(self) -> str:
+        """Get current notes content."""
+        return self.notes_editor.toPlainText()
+    
+    def clear_notes(self):
+        """Clear the notes editor."""
+        self.notes_editor.blockSignals(True)
+        self.notes_editor.clear()
+        self.notes_editor.blockSignals(False)
+        self.status_label.setText("")
+
+
+class ChatPanel(QWidget):
+    """Chat panel for interacting with Gemini."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.chat_font_size = 14  # Default font size
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        
+        # Header with font size control
+        header_layout = QHBoxLayout()
+        header = QLabel("🤖 AI Reading Assistant")
+        header.setStyleSheet("font-size: 16px; font-weight: bold; padding: 8px;")
+        header_layout.addWidget(header)
+        
+        header_layout.addStretch()
+        
+        # Font size control
+        font_size_label = QLabel("Font:")
+        font_size_label.setStyleSheet("color: #e0e0e0; padding: 4px;")
+        header_layout.addWidget(font_size_label)
+        
+        self.font_size_spin = QSpinBox()
+        self.font_size_spin.setRange(10, 24)
+        self.font_size_spin.setValue(self.chat_font_size)
+        self.font_size_spin.setSuffix(" pt")
+        self.font_size_spin.setToolTip("Adjust chat text size")
+        self.font_size_spin.setStyleSheet("""
+            QSpinBox {
+                background-color: #3d3d3d;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 4px;
+                padding: 4px;
+            }
+        """)
+        self.font_size_spin.valueChanged.connect(self.change_font_size)
+        header_layout.addWidget(self.font_size_spin)
+        
+        layout.addLayout(header_layout)
+        
+        # Chat display
+        self.chat_display = QTextEdit()
+        self.chat_display.setReadOnly(True)
+        self.update_chat_display_style()
+        layout.addWidget(self.chat_display)
+        
+        # Quick action buttons
+        actions_layout = QHBoxLayout()
+        
+        self.simplify_btn = QPushButton("🎯 Make Simpler")
+        self.simplify_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 12px;
+            }
+            QPushButton:hover { background-color: #218838; }
+            QPushButton:disabled { background-color: #666; }
+        """)
+        actions_layout.addWidget(self.simplify_btn)
+        
+        self.example_btn = QPushButton("📝 Give Example")
+        self.example_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #17a2b8;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 12px;
+            }
+            QPushButton:hover { background-color: #138496; }
+            QPushButton:disabled { background-color: #666; }
+        """)
+        actions_layout.addWidget(self.example_btn)
+        
+        self.why_btn = QPushButton("❓ Why Important")
+        self.why_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ffc107;
+                color: black;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 12px;
+            }
+            QPushButton:hover { background-color: #e0a800; }
+            QPushButton:disabled { background-color: #666; }
+        """)
+        actions_layout.addWidget(self.why_btn)
+        
+        layout.addLayout(actions_layout)
+        
+        # Input area
+        input_layout = QHBoxLayout()
+        
+        self.input_field = QTextEdit()
+        self.input_field.setPlaceholderText("Ask a question about what you're reading...")
+        self.input_field.setMaximumHeight(80)
+        self.input_field.setStyleSheet("""
+            QTextEdit {
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+                border: 1px solid #444;
+                border-radius: 8px;
+                padding: 8px;
+            }
+        """)
+        input_layout.addWidget(self.input_field)
+        
+        self.send_btn = QPushButton("Send")
+        self.send_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4a9eff;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 12px 24px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #3a8eef; }
+            QPushButton:disabled { background-color: #666; }
+        """)
+        input_layout.addWidget(self.send_btn)
+        
+        layout.addLayout(input_layout)
+        
+        # Status label
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("color: #888; font-size: 12px;")
+        layout.addWidget(self.status_label)
+    
+    def add_user_message(self, text: str):
+        self.chat_display.append(f'<div style="color: #4a9eff; margin: 8px 0;"><b>You:</b></div>')
+        self.chat_display.append(f'<div style="margin-left: 12px; margin-bottom: 16px;">{text}</div>')
+        self.chat_display.verticalScrollBar().setValue(
+            self.chat_display.verticalScrollBar().maximum()
+        )
+    
+    def add_ai_message_start(self):
+        self.chat_display.append(f'<div style="color: #28a745; margin: 8px 0;"><b>AI Assistant:</b></div>')
+        self.current_message = ""  # Accumulate chunks
+        # Store the HTML before we start adding chunks
+        self.html_before_message = self.chat_display.toHtml()
+    
+    def add_ai_chunk(self, text: str):
+        # Accumulate the chunk
+        self.current_message += text
+        
+        # Convert current accumulated message to HTML
+        html_content = markdown_to_html(self.current_message)
+        
+        # Replace entire HTML with base + new formatted content
+        # This prevents duplication by always starting from the saved state
+        self.chat_display.setHtml(self.html_before_message)
+        self.chat_display.append(f'<div style="margin-left: 12px;">{html_content}</div>')
+        
+        # Scroll to bottom
+        self.chat_display.verticalScrollBar().setValue(
+            self.chat_display.verticalScrollBar().maximum()
+        )
+    
+    def add_ai_message_end(self):
+        # Final render with proper formatting
+        html_content = markdown_to_html(self.current_message)
+        
+        # Final update from the saved state
+        self.chat_display.setHtml(self.html_before_message)
+        self.chat_display.append(f'<div style="margin-left: 12px;">{html_content}</div><br>')
+        
+        self.chat_display.verticalScrollBar().setValue(
+            self.chat_display.verticalScrollBar().maximum()
+        )
+        self.current_message = ""
+        self.html_before_message = ""
+    
+    def set_status(self, text: str):
+        self.status_label.setText(text)
+    
+    def set_buttons_enabled(self, enabled: bool):
+        self.send_btn.setEnabled(enabled)
+        self.simplify_btn.setEnabled(enabled)
+        self.example_btn.setEnabled(enabled)
+        self.why_btn.setEnabled(enabled)
+    
+    def restore_chat_history(self, history: list):
+        """Restore chat history from saved data."""
+        self.chat_display.clear()
+        for msg in history:
+            if msg["role"] == "user":
+                self.add_user_message(msg["content"])
+            elif msg["role"] == "assistant":
+                self.add_ai_message_start()
+                self.current_message = msg["content"]
+                self.add_ai_message_end()
+    
+    def set_font_size(self, size: int):
+        """Set the chat font size."""
+        self.chat_font_size = size
+        self.font_size_spin.blockSignals(True)
+        self.font_size_spin.setValue(size)
+        self.font_size_spin.blockSignals(False)
+        self.update_chat_display_style()
+    
+    def change_font_size(self, size: int):
+        """Handle font size change."""
+        self.chat_font_size = size
+        self.update_chat_display_style()
+    
+    def update_chat_display_style(self):
+        """Update chat display stylesheet with current font size."""
+        self.chat_display.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: #1e1e1e;
+                color: #e0e0e0;
+                border: 1px solid #333;
+                border-radius: 8px;
+                padding: 12px;
+                font-size: {self.chat_font_size}px;
+            }}
+        """)
 
 
 class PDFReaderHelper(QMainWindow):
@@ -139,7 +790,6 @@ class PDFReaderHelper(QMainWindow):
         
         self.page_widget = PDFPageWidget()
         self.page_widget.text_selected.connect(self.on_text_selected)
-        self.page_widget.selection_made.connect(self.on_selection_made)
         self.scroll_area.setWidget(self.page_widget)
         
         pdf_layout.addWidget(self.scroll_area)
@@ -499,41 +1149,26 @@ class PDFReaderHelper(QMainWindow):
             save_notes(self.all_notes)
     
     def on_text_selected(self, text: str, pos: QPoint):
-        """Handle text selection (backward compatibility)."""
+        """Handle text selection."""
         if text:
-            self.selection_popup.show_at(text, None, pos)
+            self.selection_popup.show_at(text, pos)
     
-    def on_selection_made(self, text: str, image_bytes: object, pos: QPoint):
-        """Handle selection with text and/or image."""
-        if text or image_bytes:
-            self.selection_popup.show_at(text, image_bytes, pos)
-    
-    def explain_selection(self, text: str, image_bytes: object):
-        """Prepare selection explanation - put in chat input for user to review."""
-        # Build a default prompt based on what was selected
-        if text and image_bytes:
-            prompt = f"Please explain this text and image:\n\n{text}"
-        elif image_bytes:
-            prompt = "What is shown in this image? Please explain any diagrams, charts, or visual elements."
-        else:
-            prompt = f"Please explain this text in simple terms:\n\n{text}"
+    def explain_selection(self, text: str):
+        """Explain the selected text."""
+        prompt = f"""Please explain this text in simple terms. The user is reading a document and selected this passage:
+
+"{text}"
+
+Provide a clear, beginner-friendly explanation. If it contains technical terms, define them. If it's a concept, give a simple analogy."""
         
-        # Put the selection in the chat input for user to review/edit
-        if image_bytes:
-            self.chat_panel.set_image_attachment(image_bytes, prompt)
-        else:
-            self.chat_panel.input_field.setPlainText(prompt)
-            self.chat_panel.input_field.setFocus()
+        self.send_to_gemini(prompt, display_text=f"Explain: \"{text[:100]}{'...' if len(text) > 100 else ''}\"")
     
     def send_message(self):
         """Send user's message to Gemini."""
         text = self.chat_panel.input_field.toPlainText().strip()
-        image_bytes = self.chat_panel.get_image_attachment()
-        
-        if text or image_bytes:
+        if text:
             self.chat_panel.input_field.clear()
-            self.chat_panel.clear_image()
-            self.send_to_gemini(text, display_text=text, image_bytes=image_bytes)
+            self.send_to_gemini(text, display_text=text)
     
     def request_simpler(self):
         """Request a simpler explanation of the last response."""
@@ -606,7 +1241,7 @@ Key behaviors:
         
         self.document_initialized = True
     
-    def send_to_gemini(self, prompt: str, display_text: str = None, include_pdf: bool = False, image_bytes: bytes = None):
+    def send_to_gemini(self, prompt: str, display_text: str = None, include_pdf: bool = False):
         """Send a message to Gemini with streaming response."""
         if not self.gemini_client:
             QMessageBox.warning(
@@ -620,11 +1255,8 @@ Key behaviors:
             self.current_worker.cancel()
             self.current_worker.wait()
         
-        # Display user message (with image indicator if present)
-        display_msg = display_text or prompt
-        if image_bytes:
-            display_msg = "🖼️ " + display_msg
-        self.chat_panel.add_user_message(display_msg)
+        # Display user message
+        self.chat_panel.add_user_message(display_text or prompt)
         self.chat_panel.add_ai_message_start()
         self.chat_panel.set_status("Thinking...")
         self.chat_panel.set_buttons_enabled(False)
@@ -643,8 +1275,7 @@ Key behaviors:
             self.selected_model,  # Use selected model
             getattr(self, 'uploaded_file', None),  # Use uploaded file reference
             self.conversation_history,
-            getattr(self, 'system_instruction', ''),
-            image_bytes
+            getattr(self, 'system_instruction', '')
         )
         self.current_worker.chunk_received.connect(self.on_chunk_received)
         self.current_worker.finished_response.connect(self.on_response_finished)
