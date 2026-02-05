@@ -392,7 +392,7 @@ class PDFReaderHelper(QMainWindow):
                 if not saved_history:
                     self.conversation_history = []  # Reset history for new document
                 self.init_chat_with_document()
-                self.chat_panel.chat_display.clear()
+                self.chat_panel.clear()
                 self.chat_panel.add_ai_message_start()
                 
                 cache_status = "(cached)" if cached_entry and self.uploaded_file else "(uploaded)"

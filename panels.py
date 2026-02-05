@@ -6,8 +6,9 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QTextEdit, QSpinBox, QFrame
 )
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import pyqtSignal, Qt, QUrl
 from PyQt6.QtGui import QPixmap
+from PyQt6.QtWebEngineWidgets import QWebEngineView
 from utils import markdown_to_html
 
 
@@ -125,10 +126,17 @@ class ChatPanel(QWidget):
         
         layout.addLayout(header_layout)
         
-        # Chat display
-        self.chat_display = QTextEdit()
-        self.chat_display.setReadOnly(True)
-        self.update_chat_display_style()
+        # Chat display using QWebEngineView for KaTeX support
+        self.chat_display = QWebEngineView()
+        self.chat_display.setStyleSheet("""
+            QWebEngineView {
+                background-color: #1e1e1e;
+                border: 1px solid #333;
+                border-radius: 8px;
+            }
+        """)
+        self.chat_messages = []  # Store messages as list
+        self._initialize_chat_html()
         layout.addWidget(self.chat_display)
         
         # Quick action buttons
@@ -259,49 +267,129 @@ class ChatPanel(QWidget):
         self.status_label.setStyleSheet("color: #888; font-size: 12px;")
         layout.addWidget(self.status_label)
     
+    def _initialize_chat_html(self):
+        """Initialize the chat display with KaTeX support."""
+        html = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+    <style>
+        body {
+            background-color: #1e1e1e;
+            color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-size: FONT_SIZEpx;
+            padding: 12px;
+            margin: 0;
+        }
+        .message {
+            margin-bottom: 16px;
+        }
+        .user-label {
+            color: #4a9eff;
+            font-weight: bold;
+            margin: 8px 0;
+        }
+        .ai-label {
+            color: #28a745;
+            font-weight: bold;
+            margin: 8px 0;
+        }
+        .message-content {
+            margin-left: 12px;
+        }
+        .katex-display, .katex {
+            color: #e0e0e0 !important;
+        }
+        pre {
+            background-color: #2a2a2a;
+            padding: 8px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        code {
+            background-color: #2a2a2a;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div id="chat-content"></div>
+    <script>
+        function renderMath() {
+            renderMathInElement(document.body, {
+                delimiters: [
+                    {left: "\\\\[", right: "\\\\]", display: true},
+                    {left: "\\\\(", right: "\\\\)", display: false}
+                ],
+                throwOnError: false
+            });
+        }
+        // Initial render
+        setTimeout(renderMath, 100);
+    </script>
+</body>
+</html>
+        """.replace("FONT_SIZE", str(self.chat_font_size))
+        self.chat_display.setHtml(html)
+    
+    def _update_chat_display(self):
+        """Update the entire chat display."""
+        messages_html = ""
+        for msg in self.chat_messages:
+            if msg["type"] == "user":
+                messages_html += f'<div class="message"><div class="user-label">You:</div><div class="message-content">{msg["content"]}</div></div>'
+            elif msg["type"] == "ai":
+                html_content = markdown_to_html(msg["content"])
+                messages_html += f'<div class="message"><div class="ai-label">AI Assistant:</div><div class="message-content">{html_content}</div></div>'
+        
+        # Escape backticks and handle special characters in messages_html
+        messages_html_escaped = messages_html.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$')
+        
+        # Inject content and render math - wait for DOM to be ready
+        script = f"""
+            (function() {{
+                var chatContent = document.getElementById('chat-content');
+                if (chatContent) {{
+                    chatContent.innerHTML = `{messages_html_escaped}`;
+                    if (typeof renderMath === 'function') {{
+                        renderMath();
+                    }}
+                    window.scrollTo(0, document.body.scrollHeight);
+                }}
+            }})();
+        """
+        self.chat_display.page().runJavaScript(script)
+    
+    def clear(self):
+        """Clear all chat messages."""
+        self.chat_messages = []
+        self._update_chat_display()
+    
     def add_user_message(self, text: str):
-        self.chat_display.append(f'<div style="color: #4a9eff; margin: 8px 0;"><b>You:</b></div>')
-        self.chat_display.append(f'<div style="margin-left: 12px; margin-bottom: 16px;">{text}</div>')
-        self.chat_display.verticalScrollBar().setValue(
-            self.chat_display.verticalScrollBar().maximum()
-        )
+        self.chat_messages.append({"type": "user", "content": text})
+        self._update_chat_display()
     
     def add_ai_message_start(self):
-        self.chat_display.append(f'<div style="color: #28a745; margin: 8px 0;"><b>AI Assistant:</b></div>')
         self.current_message = ""  # Accumulate chunks
-        # Store the HTML before we start adding chunks
-        self.html_before_message = self.chat_display.toHtml()
+        self.current_message_index = len(self.chat_messages)
+        self.chat_messages.append({"type": "ai", "content": ""})
     
     def add_ai_chunk(self, text: str):
         # Accumulate the chunk
         self.current_message += text
-        
-        # Convert current accumulated message to HTML
-        html_content = markdown_to_html(self.current_message)
-        
-        # Replace entire HTML with base + new formatted content
-        # This prevents duplication by always starting from the saved state
-        self.chat_display.setHtml(self.html_before_message)
-        self.chat_display.append(f'<div style="margin-left: 12px;">{html_content}</div>')
-        
-        # Scroll to bottom
-        self.chat_display.verticalScrollBar().setValue(
-            self.chat_display.verticalScrollBar().maximum()
-        )
+        self.chat_messages[self.current_message_index]["content"] = self.current_message
+        self._update_chat_display()
     
     def add_ai_message_end(self):
-        # Final render with proper formatting
-        html_content = markdown_to_html(self.current_message)
-        
-        # Final update from the saved state
-        self.chat_display.setHtml(self.html_before_message)
-        self.chat_display.append(f'<div style="margin-left: 12px;">{html_content}</div><br>')
-        
-        self.chat_display.verticalScrollBar().setValue(
-            self.chat_display.verticalScrollBar().maximum()
-        )
+        # Final update
+        self._update_chat_display()
         self.current_message = ""
-        self.html_before_message = ""
     
     def set_status(self, text: str):
         self.status_label.setText(text)
@@ -314,14 +402,13 @@ class ChatPanel(QWidget):
     
     def restore_chat_history(self, history: list):
         """Restore chat history from saved data."""
-        self.chat_display.clear()
+        self.chat_messages = []
         for msg in history:
             if msg["role"] == "user":
-                self.add_user_message(msg["content"])
+                self.chat_messages.append({"type": "user", "content": msg["content"]})
             elif msg["role"] == "assistant":
-                self.add_ai_message_start()
-                self.current_message = msg["content"]
-                self.add_ai_message_end()
+                self.chat_messages.append({"type": "ai", "content": msg["content"]})
+        self._update_chat_display()
     
     def set_font_size(self, size: int):
         """Set the chat font size."""
@@ -329,25 +416,14 @@ class ChatPanel(QWidget):
         self.font_size_spin.blockSignals(True)
         self.font_size_spin.setValue(size)
         self.font_size_spin.blockSignals(False)
-        self.update_chat_display_style()
+        self._initialize_chat_html()
+        self._update_chat_display()
     
     def change_font_size(self, size: int):
         """Handle font size change."""
         self.chat_font_size = size
-        self.update_chat_display_style()
-    
-    def update_chat_display_style(self):
-        """Update chat display stylesheet with current font size."""
-        self.chat_display.setStyleSheet(f"""
-            QTextEdit {{
-                background-color: #1e1e1e;
-                color: #e0e0e0;
-                border: 1px solid #333;
-                border-radius: 8px;
-                padding: 12px;
-                font-size: {self.chat_font_size}px;
-            }}
-        """)
+        self._initialize_chat_html()
+        self._update_chat_display()
     
     def set_image_attachment(self, image_bytes: bytes, prompt_text: str = ""):
         """Set an image attachment with optional prompt text."""

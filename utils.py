@@ -117,9 +117,26 @@ def save_chat_history(chat_history: dict):
 
 
 def markdown_to_html(text: str) -> str:
-    """Convert simple markdown to HTML."""
-    # Escape HTML
+    """Convert simple markdown to HTML with KaTeX math support."""
+    # Escape HTML (but preserve for LaTeX processing later)
     text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    
+    # Protect LaTeX expressions from further processing
+    # Store them temporarily and restore later
+    latex_inline = []
+    latex_display = []
+    
+    # Extract display math ($$...$$)
+    def store_display_math(match):
+        latex_display.append(match.group(1))
+        return f'___DISPLAY_MATH_{len(latex_display)-1}___'
+    text = re.sub(r'\$\$(.+?)\$\$', store_display_math, text, flags=re.DOTALL)
+    
+    # Extract inline math ($...$)
+    def store_inline_math(match):
+        latex_inline.append(match.group(1))
+        return f'___INLINE_MATH_{len(latex_inline)-1}___'
+    text = re.sub(r'\$(.+?)\$', store_inline_math, text)
     
     # Bold
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
@@ -196,6 +213,21 @@ def markdown_to_html(text: str) -> str:
     # Line breaks
     text = text.replace('\n\n', '<br><br>')
     text = text.replace('\n', '<br>')
+    
+    # Restore LaTeX expressions with KaTeX rendering
+    # Restore display math
+    for i, latex in enumerate(latex_display):
+        # Unescape the LaTeX content
+        latex = latex.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+        text = text.replace(f'___DISPLAY_MATH_{i}___', 
+                          f'<span class="katex-display">\\[{latex}\\]</span>')
+    
+    # Restore inline math
+    for i, latex in enumerate(latex_inline):
+        # Unescape the LaTeX content
+        latex = latex.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+        text = text.replace(f'___INLINE_MATH_{i}___', 
+                          f'<span class="katex-inline">\\({latex}\\)</span>')
     
     return text
 

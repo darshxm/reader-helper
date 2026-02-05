@@ -29,4 +29,4 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 printf "GEMINI_API_KEY=%s\n" "$GEMINI_API_KEY" >> "$ENV_FILE"
 
-printf "\nSetup complete. Activate with: source .venv/bin/activate\n"
+printf "\nSetup complete. Now go execute run.sh, and if you are on Windows then god help you.\n"
