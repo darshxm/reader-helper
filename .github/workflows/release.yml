@@ -24,6 +24,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build executable
+        shell: cmd
         run: |
           pyinstaller --name "PDFReaderHelper" ^
             --onedir ^
