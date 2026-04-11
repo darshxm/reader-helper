@@ -34,7 +34,10 @@ from panels import NotesPanel, ChatPanel
 
 class PDFReaderHelper(QMainWindow):
     """Main application window."""
-    
+
+    MIN_ZOOM_PERCENT = 50
+    MAX_ZOOM_PERCENT = 800
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("PDF Reader Helper")
@@ -76,7 +79,11 @@ class PDFReaderHelper(QMainWindow):
         # Load user configuration and notes
         self.config = load_config()
         self.selected_model = self.config.get("preferred_model", MODEL)
-        self.zoom = self.config.get("default_zoom", 1.5)  # Load default zoom from config
+        saved_zoom = self.config.get("default_zoom", 1.5)
+        self.zoom = max(
+            self.MIN_ZOOM_PERCENT / 100.0,
+            min(saved_zoom, self.MAX_ZOOM_PERCENT / 100.0),
+        )
         self.chat_font_size = self.config.get("chat_font_size", 14)  # Load chat font size from config
         self.all_notes = load_notes()  # All PDF notes
         self.all_chat_history = load_chat_history()  # All PDF chat histories
@@ -226,7 +233,16 @@ class PDFReaderHelper(QMainWindow):
         splitter.addWidget(pdf_container)
         splitter.addWidget(right_panel)
         splitter.setSizes([900, 500])
-        
+        splitter.setHandleWidth(6)
+        splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #444;
+            }
+            QSplitter::handle:hover {
+                background-color: #4a9eff;
+            }
+        """)
+
         layout.addWidget(splitter)
     
     def setup_toolbar(self):
@@ -245,7 +261,7 @@ class PDFReaderHelper(QMainWindow):
         toolbar.addWidget(QLabel("Zoom:"))
         
         self.zoom_spin = QSpinBox()
-        self.zoom_spin.setRange(50, 300)
+        self.zoom_spin.setRange(self.MIN_ZOOM_PERCENT, self.MAX_ZOOM_PERCENT)
         self.zoom_spin.setValue(int(self.zoom * 100))  # Use saved default zoom
         self.zoom_spin.setSuffix("%")
         self.zoom_spin.valueChanged.connect(self.change_zoom)

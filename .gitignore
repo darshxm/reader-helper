@@ -4,3 +4,7 @@
 *.json
 /__pycache__/
 /Famous_Deep_Learning_Papers/
+/build/
+/dist/
+*.spec
+download_ai_papers.py
