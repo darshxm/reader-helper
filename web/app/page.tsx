@@ -84,7 +84,14 @@ export default function Home() {
 
   // ── File open ─────────────────────────────────────────────────────────────
 
+  const MAX_PDF_MB = 4;
+  const MAX_PDF_BYTES = MAX_PDF_MB * 1024 * 1024;
+
   async function handleFileOpen(file: File) {
+    if (file.size > MAX_PDF_BYTES) {
+      alert(`This PDF is ${(file.size / 1024 / 1024).toFixed(1)} MB. The maximum supported size is ${MAX_PDF_MB} MB.`);
+      return;
+    }
     setUploading(true);
     setStatus("Reading file…");
     setPdfName(file.name);
@@ -303,6 +310,7 @@ export default function Home() {
             📂 Open PDF
           </span>
         </label>
+        <span className="text-xs" style={{ color: "#666" }}>Max 4 MB</span>
 
         {pdfName && (
           <span className="text-sm truncate max-w-xs" style={{ color: "#999" }}>
@@ -378,6 +386,7 @@ export default function Home() {
                   Choose PDF
                 </span>
               </label>
+              <span style={{ color: "#555", fontSize: 13 }}>Max 4 MB per file</span>
             </div>
           )}
         </div>
