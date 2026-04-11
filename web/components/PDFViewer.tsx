@@ -45,8 +45,15 @@ export default function PDFViewer({
   const loadPdf = useCallback(async () => {
     if (!fileBytes) return;
     const pdfjsLib = await import("pdfjs-dist");
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
-    const pdf = await pdfjsLib.getDocument({ data: fileBytes }).promise;
+    // pdfjs creates a classic Worker internally, which can't load .mjs directly.
+    // Wrap it in a blob that uses dynamic import so it loads as an ES module.
+    const workerBlob = new Blob(
+      [`import '${location.origin}/pdf.worker.min.mjs'`],
+      { type: "application/javascript" }
+    );
+    pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(workerBlob);
+    // .slice() copies the ArrayBuffer so pdfjs doesn't detach the original
+    const pdf = await pdfjsLib.getDocument({ data: fileBytes.slice() }).promise;
     pdfRef.current = pdf;
     onTotalPages(pdf.numPages);
   }, [fileBytes, onTotalPages]);
