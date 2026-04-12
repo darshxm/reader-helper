@@ -1,8 +1,8 @@
 # PDF Reader Helper
 
-AI-powered PDF reading assistant with Google Gemini. Available as a **web app** (deployed on Vercel) and a **local desktop app** (PyQt6).
+AI-powered PDF reading assistant with Google Gemini. Available as a **[web app](https://reader-helper.vercel.app)** and a **local desktop app** (PyQt6).
 
-Inspired by [Andrej Karpathy's reader3](https://github.com/karpathy/reader3) — built with a focus on reading scientific papers rather than books. Select any text or region, send it to Gemini, and get instant explanations.
+Inspired by [Andrej Karpathy's reader3](https://github.com/karpathy/reader3), but with a focus on reading scientific papers. Select any text or region, send it to Gemini, and get instant explanations. I would like to add support for all sorts of providers later on, but I mainly used Gemini for its document upload feature. I can see this working with openrouter, but maybe a bit into the future (depends on demand, I guess). Please let me know through issues what you think is a problem, or what a good feature could be. Happy to have PRs as well.
 
 ---
 
@@ -10,7 +10,7 @@ Inspired by [Andrej Karpathy's reader3](https://github.com/karpathy/reader3) —
 
 Live at **[reader-helper.vercel.app](https://reader-helper.vercel.app)**
 
-New visitors get **10 free messages** powered by the developer's API key. After that, bring your own free Gemini key from [Google AI Studio](https://aistudio.google.com/apikey).
+New visitors get **10 free messages** powered by my API key (to get started, but this will be removed soon). After that, bring your own free Gemini key from [Google AI Studio](https://aistudio.google.com/apikey).
 
 ### Features
 
@@ -21,24 +21,6 @@ New visitors get **10 free messages** powered by the developer's API key. After 
 - Per-PDF conversation history and notes, persisted in the browser
 - Model selector (Gemini Flash, Flash Thinking, Pro)
 - Remembers last page and zoom level per PDF
-
-### Self-hosting on Vercel
-
-1. Fork the repo and import it into Vercel, setting the **root directory** to `web/`
-
-2. Add these environment variables in **Vercel → Settings → Environment Variables** (no quotes around values):
-
-   | Variable | Description |
-   |---|---|
-   | `GEMINI_API_KEY` | Your Gemini API key — used for the free tier |
-   | `UPSTASH_REDIS_REST_URL` | Upstash Redis REST URL (e.g. `https://xxx.upstash.io`) |
-   | `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST token |
-
-   Create a free Redis database at [upstash.com](https://upstash.com) — no setup needed, keys are created automatically on first use.
-
-   If you omit the Redis/Gemini vars, the app still works but requires every visitor to supply their own API key.
-
-3. Redeploy — the free tier will be active immediately.
 
 ### Local development
 
@@ -59,7 +41,7 @@ UPSTASH_REDIS_REST_TOKEN=your_token_here
 
 ## Desktop App
 
-A fully local PyQt6 application — no server, no deployment. Everything runs on your machine.
+A fully local PyQt6 application. Everything runs on your machine. Just download from releases (I recommedn the webapp though, the desktop app does not look as great.)
 
 ### Setup
 
@@ -109,4 +91,4 @@ Or use the setup script:
 
 ## Contributing
 
-Issues and PRs are welcome. MIT licensed — use it however you like.
+Issues and PRs are welcome. MIT licensed: use it however you like.
