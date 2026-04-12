@@ -1,11 +1,14 @@
-// POST /api/chat — streaming chat with Gemini, using uploaded file reference
+// POST /api/chat — streaming chat with Gemini, using uploaded file reference.
 //
-// The user's Gemini API key is read from the Authorization header (Bearer token).
-// It is never stored — used only for this request.
+// Auth priority:
+//   1. Authorization: Bearer <user-key>  →  use user's own key (unlimited)
+//   2. No header                         →  use server GEMINI_API_KEY with per-IP free quota
+//   3. No header + quota exhausted       →  429 QUOTA_EXHAUSTED
 
 import { NextRequest } from "next/server";
 import { GoogleGenAI } from "@google/genai";
-import { SYSTEM_INSTRUCTION } from "@/lib/gemini";
+import { SYSTEM_INSTRUCTION, AVAILABLE_MODELS } from "@/lib/gemini";
+import { consumeFreeMessage, freeTierConfigured, getClientIP } from "@/lib/redis";
 import type { Message } from "@/lib/storage";
 
 export const runtime = "nodejs";
@@ -13,17 +16,43 @@ export const maxDuration = 60;
 
 function getApiKey(req: NextRequest): string | null {
   const auth = req.headers.get("authorization");
-  if (auth?.startsWith("Bearer ")) return auth.slice(7).trim();
-  return null;
+  if (!auth?.startsWith("Bearer ")) return null;
+  const key = auth.slice(7).trim();
+  return key || null;
 }
 
 export async function POST(req: NextRequest) {
-  const apiKey = getApiKey(req);
-  if (!apiKey) {
-    return new Response(JSON.stringify({ error: "API key required" }), { status: 401 });
+  const userApiKey = getApiKey(req);
+
+  let apiKeyToUse: string;
+  let freeRemaining: number | null = null;
+
+  if (userApiKey) {
+    apiKeyToUse = userApiKey;
+  } else {
+    // Free-tier path: use server key, enforced by per-IP quota
+    if (!freeTierConfigured()) {
+      return new Response(JSON.stringify({ error: "API key required" }), { status: 401 });
+    }
+
+    const ip = getClientIP(req);
+    const quota = await consumeFreeMessage(ip);
+
+    if (!quota || !quota.allowed) {
+      return new Response(
+        JSON.stringify({
+          error: "Free quota exhausted. Please add your own Gemini API key to continue.",
+          code: "QUOTA_EXHAUSTED",
+        }),
+        { status: 429 },
+      );
+    }
+
+    apiKeyToUse = process.env.GEMINI_API_KEY!;
+    freeRemaining = quota.remaining;
   }
 
-  const body = await req.json() as {
+  const body = (await req.json()) as {
     message: string;
     model: string;
     fileName: string;
@@ -37,7 +66,15 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: "message required" }), { status: 400 });
   }
 
-  const client = new GoogleGenAI({ apiKey });
+  if (!model || !AVAILABLE_MODELS.includes(model)) {
+    return new Response(JSON.stringify({ error: "invalid model" }), { status: 400 });
+  }
+
+  if (fileName && !/^files\/[a-zA-Z0-9_-]+$/.test(fileName)) {
+    return new Response(JSON.stringify({ error: "invalid fileName" }), { status: 400 });
+  }
+
+  const client = new GoogleGenAI({ apiKey: apiKeyToUse });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const parts: any[] = [];
@@ -97,6 +134,8 @@ export async function POST(req: NextRequest) {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
+      // Only present when using the free tier
+      ...(freeRemaining !== null && { "X-Free-Remaining": String(freeRemaining) }),
     },
   });
 }

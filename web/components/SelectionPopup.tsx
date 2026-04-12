@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import Paper from "@mui/material/Paper";
+import Button from "@mui/material/Button";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 
 interface Props {
   x: number;
@@ -24,36 +27,32 @@ export default function SelectionPopup({ x, y, hasText, hasImage, onExplain, onC
     return () => document.removeEventListener("mousedown", handler);
   }, [onClose]);
 
-  const label = hasText && hasImage
-    ? "🤖 Explain text & image"
-    : hasImage
-    ? "🤖 Explain image"
-    : "🤖 Explain this";
+  const label =
+    hasText && hasImage ? "Explain text & image" : hasImage ? "Explain image" : "Explain this";
 
   return (
-    <div
+    <Paper
       ref={ref}
-      style={{
+      elevation={6}
+      sx={{
         position: "fixed",
         left: x,
-        top: y - 50,
-        zIndex: 1000,
+        top: y - 52,
+        zIndex: 1200,
         transform: "translateX(-50%)",
+        borderRadius: 5,
+        overflow: "hidden",
       }}
     >
-      <button
+      <Button
         onClick={() => { onExplain(); onClose(); }}
-        className="px-4 py-2 rounded-lg text-sm font-medium shadow-lg"
-        style={{
-          background: "#4a9eff",
-          color: "#fff",
-          border: "none",
-          cursor: "pointer",
-          whiteSpace: "nowrap",
-        }}
+        variant="contained"
+        size="small"
+        startIcon={<AutoAwesomeIcon sx={{ fontSize: "16px !important" }} />}
+        sx={{ px: 2, py: 1, whiteSpace: "nowrap", borderRadius: 5 }}
       >
         {label}
-      </button>
-    </div>
+      </Button>
+    </Paper>
   );
 }

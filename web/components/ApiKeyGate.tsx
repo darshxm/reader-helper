@@ -1,12 +1,22 @@
 "use client";
 
 import { useState } from "react";
+import Dialog from "@mui/material/Dialog";
+import DialogTitle from "@mui/material/DialogTitle";
+import DialogContent from "@mui/material/DialogContent";
+import TextField from "@mui/material/TextField";
+import Button from "@mui/material/Button";
+import Typography from "@mui/material/Typography";
+import Link from "@mui/material/Link";
+import Box from "@mui/material/Box";
+import Alert from "@mui/material/Alert";
 
 interface Props {
   onSave: (key: string) => void;
+  quotaExhausted?: boolean;
 }
 
-export default function ApiKeyGate({ onSave }: Props) {
+export default function ApiKeyGate({ onSave, quotaExhausted = false }: Props) {
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
 
@@ -21,61 +31,55 @@ export default function ApiKeyGate({ onSave }: Props) {
   }
 
   return (
-    <div
-      className="fixed inset-0 flex items-center justify-center z-50"
-      style={{ background: "rgba(0,0,0,0.85)" }}
-    >
-      <div
-        className="rounded-xl p-8 w-full max-w-md"
-        style={{ background: "#2d2d2d", border: "1px solid #444" }}
-      >
-        <h2 className="text-xl font-semibold mb-2" style={{ color: "#fff" }}>
-          Enter your Gemini API key
-        </h2>
-        <p className="text-sm mb-1" style={{ color: "#999" }}>
-          This app uses your own Google Gemini API key. It is stored only in your browser and sent
-          directly to Gemini over HTTPS — never stored on any server.
-        </p>
-        <a
+    <Dialog open fullWidth maxWidth="sm" slotProps={{ paper: { sx: { bgcolor: "background.paper" } } }}>
+      <DialogTitle sx={{ pb: 0 }}>
+        {quotaExhausted ? "Free messages used up" : "Enter your Gemini API key"}
+      </DialogTitle>
+      <DialogContent>
+        {quotaExhausted ? (
+          <Alert severity="info" sx={{ mt: 1, mb: 2 }}>
+            You've used your 10 free messages. Add your own Gemini API key to keep going — it's
+            free to get and you only pay for what you use.
+          </Alert>
+        ) : (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 1 }}>
+            This app uses your own Google Gemini API key. It is stored only in your browser and
+            sent directly to Gemini over HTTPS — never stored on any server.
+          </Typography>
+        )}
+
+        <Link
           href="https://aistudio.google.com/app/apikey"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-sm underline block mb-6"
-          style={{ color: "#4a9eff" }}
+          variant="body2"
+          sx={{ display: "block", mb: 3 }}
         >
           Get a free API key from Google AI Studio →
-        </a>
+        </Link>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-          <input
+        <Box component="form" onSubmit={handleSubmit} sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <TextField
             type="password"
             value={value}
             onChange={(e) => { setValue(e.target.value); setError(""); }}
             placeholder="AIzaSy..."
             autoFocus
-            className="rounded px-3 py-2 text-sm"
-            style={{
-              background: "#1a1a1a",
-              color: "#e0e0e0",
-              border: "1px solid #555",
-              outline: "none",
-            }}
+            fullWidth
+            size="small"
+            label="API Key"
+            autoComplete="new-password"
           />
-          {error && <p className="text-sm" style={{ color: "#ff6b6b" }}>{error}</p>}
-          <button
-            type="submit"
-            disabled={!value.trim()}
-            className="rounded py-2 text-sm font-medium disabled:opacity-40"
-            style={{ background: "#4a9eff", color: "#fff" }}
-          >
+          {error && <Alert severity="error" sx={{ py: 0 }}>{error}</Alert>}
+          <Button type="submit" variant="contained" disabled={!value.trim()} fullWidth>
             Save &amp; continue
-          </button>
-        </form>
+          </Button>
+        </Box>
 
-        <p className="text-xs mt-4" style={{ color: "#666" }}>
+        <Typography variant="caption" color="text.disabled" sx={{ display: "block", mt: 2 }}>
           Your key is saved in localStorage and cleared if you click "Remove key" in the toolbar.
-        </p>
-      </div>
-    </div>
+        </Typography>
+      </DialogContent>
+    </Dialog>
   );
 }

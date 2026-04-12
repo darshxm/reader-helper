@@ -9,7 +9,13 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@emotion/cache": "^11.14.0",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
     "@google/genai": "^1.49.0",
+    "@mui/icons-material": "^9.0.0",
+    "@mui/material": "^9.0.0",
+    "@upstash/redis": "^1.37.0",
     "@vercel/analytics": "^2.0.1",
     "ai": "^6.0.158",
     "next": "16.2.3",

@@ -2,6 +2,11 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { saveLastPage } from "@/lib/storage";
+import Box from "@mui/material/Box";
+import IconButton from "@mui/material/IconButton";
+import Typography from "@mui/material/Typography";
+import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 
 interface SelectionInfo {
   text: string;
@@ -37,32 +42,29 @@ export default function PDFViewer({
   const pdfRef = useRef<any>(null);
   const renderTaskRef = useRef<{ cancel: () => void } | null>(null);
 
+  const [pdfVersion, setPdfVersion] = useState(0);
   const [selecting, setSelecting] = useState(false);
   const [selStart, setSelStart] = useState<{ x: number; y: number } | null>(null);
   const [selRect, setSelRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
-  // Load PDF.js lazily (it's large and browser-only)
   const loadPdf = useCallback(async () => {
     if (!fileBytes) return;
     const pdfjsLib = await import("pdfjs-dist");
-    // pdfjs creates a classic Worker internally, which can't load .mjs directly.
-    // Wrap it in a blob that uses dynamic import so it loads as an ES module.
     const workerBlob = new Blob(
       [`import '${location.origin}/pdf.worker.min.mjs'`],
       { type: "application/javascript" }
     );
     pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(workerBlob);
-    // .slice() copies the ArrayBuffer so pdfjs doesn't detach the original
     const pdf = await pdfjsLib.getDocument({ data: fileBytes.slice() }).promise;
     pdfRef.current = pdf;
     onTotalPages(pdf.numPages);
+    setPdfVersion((v) => v + 1);
   }, [fileBytes, onTotalPages]);
 
   useEffect(() => {
     loadPdf();
   }, [loadPdf]);
 
-  // Render page whenever currentPage or zoom changes
   useEffect(() => {
     async function render() {
       if (!pdfRef.current || !canvasRef.current) return;
@@ -89,22 +91,17 @@ export default function PDFViewer({
       }
     }
     render();
-  }, [currentPage, zoom, pdfRef.current]);
+  }, [currentPage, zoom, pdfVersion]);
 
-  // --- Selection handling ---
   function getCanvasPos(e: React.MouseEvent) {
     const rect = canvasRef.current!.getBoundingClientRect();
-    return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-    };
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
   function onMouseDown(e: React.MouseEvent) {
     if (!pdfRef.current) return;
     setSelecting(true);
-    const pos = getCanvasPos(e);
-    setSelStart(pos);
+    setSelStart(getCanvasPos(e));
     setSelRect(null);
   }
 
@@ -138,11 +135,9 @@ export default function PDFViewer({
       return;
     }
 
-    // Extract text from selection
     const page = await pdfRef.current.getPage(currentPage + 1);
     const viewport = page.getViewport({ scale: zoom });
 
-    // Convert canvas coords → PDF coords
     const pdfX1 = rect.x / zoom;
     const pdfY1 = rect.y / zoom;
     const pdfX2 = (rect.x + rect.w) / zoom;
@@ -162,7 +157,6 @@ export default function PDFViewer({
       .map((item: any) => item.str)
       .join(" ");
 
-    // Capture image of selection from canvas at 2x resolution
     let imageBase64: string | null = null;
     if (rect.w > 5 && rect.h > 5) {
       const offscreen = document.createElement("canvas");
@@ -170,22 +164,13 @@ export default function PDFViewer({
       offscreen.width = rect.w * scale;
       offscreen.height = rect.h * scale;
       const octx = offscreen.getContext("2d")!;
-      octx.drawImage(
-        canvasRef.current,
-        rect.x, rect.y, rect.w, rect.h,
-        0, 0, rect.w * scale, rect.h * scale
-      );
+      octx.drawImage(canvasRef.current, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w * scale, rect.h * scale);
       imageBase64 = offscreen.toDataURL("image/png").split(",")[1];
     }
 
     if (selectedText || imageBase64) {
       const canvasRect = canvasRef.current.getBoundingClientRect();
-      onSelection({
-        text: selectedText,
-        imageBase64,
-        x: canvasRect.left + rect.x + rect.w / 2,
-        y: canvasRect.top + rect.y,
-      });
+      onSelection({ text: selectedText, imageBase64, x: canvasRect.left + rect.x + rect.w / 2, y: canvasRect.top + rect.y });
     }
 
     setSelRect(null);
@@ -198,14 +183,13 @@ export default function PDFViewer({
   }
 
   return (
-    <div className="flex flex-col h-full" style={{ background: "#1a1a1a" }}>
+    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", bgcolor: "#1a1a1a" }}>
       {/* Canvas area */}
-      <div
+      <Box
         ref={containerRef}
-        className="flex-1 overflow-auto flex justify-center"
-        style={{ background: "#333" }}
+        sx={{ flex: 1, overflowAuto: "auto", overflow: "auto", display: "flex", justifyContent: "center", bgcolor: "#333" }}
       >
-        <div className="relative select-none" style={{ userSelect: "none" }}>
+        <Box sx={{ position: "relative", userSelect: "none" }}>
           <canvas
             ref={canvasRef}
             onMouseDown={onMouseDown}
@@ -213,49 +197,56 @@ export default function PDFViewer({
             onMouseUp={onMouseUp}
             style={{ display: "block", cursor: "crosshair" }}
           />
-          {/* Selection overlay */}
           {selRect && (
-            <div
-              style={{
+            <Box
+              sx={{
                 position: "absolute",
                 left: selRect.x,
                 top: selRect.y,
                 width: selRect.w,
                 height: selRect.h,
-                background: "rgba(74, 158, 255, 0.25)",
+                bgcolor: "rgba(74, 158, 255, 0.2)",
                 border: "1px solid rgba(74, 158, 255, 0.6)",
                 pointerEvents: "none",
               }}
             />
           )}
-        </div>
-      </div>
+        </Box>
+      </Box>
 
       {/* Navigation */}
-      <div
-        className="flex items-center justify-between px-4 py-2"
-        style={{ background: "#2d2d2d", borderTop: "1px solid #444" }}
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          px: 2,
+          py: 0.75,
+          bgcolor: "background.paper",
+          borderTop: "1px solid",
+          borderColor: "divider",
+        }}
       >
-        <button
+        <IconButton
           onClick={() => goTo(currentPage - 1)}
           disabled={currentPage === 0}
-          className="px-4 py-2 rounded text-sm disabled:opacity-40"
-          style={{ background: "#3d3d3d", color: "#e0e0e0" }}
+          size="small"
+          color="inherit"
         >
-          ◀ Previous
-        </button>
-        <span style={{ color: "#e0e0e0", fontSize: 14 }}>
-          {totalPages > 0 ? `Page ${currentPage + 1} / ${totalPages}` : "—"}
-        </span>
-        <button
+          <ChevronLeftIcon />
+        </IconButton>
+        <Typography variant="body2" color="text.secondary">
+          {totalPages > 0 ? `${currentPage + 1} / ${totalPages}` : "—"}
+        </Typography>
+        <IconButton
           onClick={() => goTo(currentPage + 1)}
           disabled={currentPage >= totalPages - 1}
-          className="px-4 py-2 rounded text-sm disabled:opacity-40"
-          style={{ background: "#3d3d3d", color: "#e0e0e0" }}
+          size="small"
+          color="inherit"
         >
-          Next ▶
-        </button>
-      </div>
-    </div>
+          <ChevronRightIcon />
+        </IconButton>
+      </Box>
+    </Box>
   );
 }

@@ -2,13 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import Box from "@mui/material/Box";
+import Paper from "@mui/material/Paper";
+import Typography from "@mui/material/Typography";
+import TextField from "@mui/material/TextField";
+import IconButton from "@mui/material/IconButton";
+import Button from "@mui/material/Button";
+import Divider from "@mui/material/Divider";
+import SendIcon from "@mui/icons-material/Send";
+import SmartToyOutlinedIcon from "@mui/icons-material/SmartToyOutlined";
+import CloseIcon from "@mui/icons-material/Close";
 import type { Message } from "@/lib/storage";
-
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-  imageBase64?: string;
-}
 
 interface Props {
   history: Message[];
@@ -18,9 +22,26 @@ interface Props {
   status: string;
   pendingImage: string | null;
   onClearImage: () => void;
-  onSetInput: (text: string) => void;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
 }
+
+const quickActions = [
+  {
+    label: "Simpler",
+    prompt:
+      "Please explain that in even simpler terms. Pretend I'm a complete beginner with no background in this topic. Use everyday language and simple analogies.",
+  },
+  {
+    label: "Example",
+    prompt:
+      "Can you give me a concrete, real-world example of this concept? Something I might encounter in everyday life.",
+  },
+  {
+    label: "Why important",
+    prompt:
+      "Why is this concept important? What problems does it solve or what would happen without it?",
+  },
+];
 
 export default function ChatPanel({
   history,
@@ -30,7 +51,6 @@ export default function ChatPanel({
   status,
   pendingImage,
   onClearImage,
-  onSetInput,
   inputRef,
 }: Props) {
   const [input, setInput] = useState("");
@@ -39,11 +59,6 @@ export default function ChatPanel({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [history, streamingText]);
-
-  // Expose setInput via onSetInput
-  useEffect(() => {
-    // nothing — parent calls onSetInput which sets state in parent; we sync via a ref pattern below
-  }, []);
 
   function handleSend() {
     const text = input.trim();
@@ -59,126 +74,172 @@ export default function ChatPanel({
     }
   }
 
-  const displayMessages: ChatMessage[] = history.map((m) => ({ role: m.role, content: m.content }));
-
   return (
-    <div className="flex flex-col h-full" style={{ background: "#252525" }}>
+    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", bgcolor: "background.paper" }}>
       {/* Header */}
-      <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid #444" }}>
-        <span style={{ color: "#e0e0e0", fontWeight: 600 }}>🤖 AI Reading Assistant</span>
-        {status && <span style={{ color: "#999", fontSize: 12 }}>{status}</span>}
-      </div>
+      <Box
+        sx={{
+          px: 2,
+          py: 1.5,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <SmartToyOutlinedIcon fontSize="small" color="primary" />
+          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+            AI Reading Assistant
+          </Typography>
+        </Box>
+        {status && (
+          <Typography variant="caption" color="text.secondary">
+            {status}
+          </Typography>
+        )}
+      </Box>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {displayMessages.length === 0 && !streaming && (
-          <div style={{ color: "#666", fontSize: 14, textAlign: "center", marginTop: 40 }}>
+      <Box sx={{ flex: 1, overflowY: "auto", px: 2, py: 2, display: "flex", flexDirection: "column", gap: 1.5 }}>
+        {history.length === 0 && !streaming && (
+          <Typography
+            variant="body2"
+            color="text.disabled"
+            sx={{ textAlign: "center", mt: 6, px: 2 }}
+          >
             Open a PDF and start asking questions, or select text to explain it.
-          </div>
+          </Typography>
         )}
 
-        {displayMessages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-            {msg.role === "user" ? (
-              <div
-                className="rounded-lg px-4 py-2 max-w-[85%] text-sm"
-                style={{ background: "#1a4a7a", color: "#e0e0e0" }}
-              >
-                {msg.imageBase64 && (
-                  <div className="mb-2 text-xs opacity-70">🖼️ [image attached]</div>
-                )}
-                <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
-              </div>
-            ) : (
-              <div
-                className="rounded-lg px-4 py-2 max-w-[95%] text-sm chat-message"
-                style={{ background: "#2d2d2d", color: "#e0e0e0" }}
-              >
-                <ReactMarkdown>{msg.content}</ReactMarkdown>
-              </div>
-            )}
-          </div>
+        {history.map((msg, i) => (
+          <Box
+            key={i}
+            sx={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}
+          >
+            <Paper
+              elevation={0}
+              sx={{
+                px: 2,
+                py: 1.25,
+                maxWidth: "88%",
+                fontSize: 14,
+                lineHeight: 1.6,
+                bgcolor:
+                  msg.role === "user"
+                    ? "primary.dark"
+                    : "background.default",
+                borderRadius:
+                  msg.role === "user"
+                    ? "16px 16px 4px 16px"
+                    : "16px 16px 16px 4px",
+                color: "text.primary",
+              }}
+            >
+              {msg.role === "assistant" ? (
+                <Box className="chat-message" sx={{ "& > *:first-of-type": { mt: 0 }, "& > *:last-child": { mb: 0 } }}>
+                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                </Box>
+              ) : (
+                <>
+                  {msg.content.includes("[image attached]") && (
+                    <Typography variant="caption" sx={{ opacity: 0.7, display: "block", mb: 0.5 }}>
+                      🖼 image attached
+                    </Typography>
+                  )}
+                  <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
+                    {msg.content}
+                  </Typography>
+                </>
+              )}
+            </Paper>
+          </Box>
         ))}
 
-        {/* Streaming response */}
+        {/* Streaming */}
         {streaming && (
-          <div className="flex justify-start">
-            <div
-              className="rounded-lg px-4 py-2 max-w-[95%] text-sm chat-message"
-              style={{ background: "#2d2d2d", color: "#e0e0e0" }}
+          <Box sx={{ display: "flex", justifyContent: "flex-start" }}>
+            <Paper
+              elevation={0}
+              sx={{
+                px: 2,
+                py: 1.25,
+                maxWidth: "88%",
+                fontSize: 14,
+                bgcolor: "background.default",
+                borderRadius: "16px 16px 16px 4px",
+                color: "text.primary",
+              }}
             >
-              <ReactMarkdown>{streamingText || "…"}</ReactMarkdown>
-            </div>
-          </div>
+              <Box className="chat-message" sx={{ "& > *:first-of-type": { mt: 0 }, "& > *:last-child": { mb: 0 } }}>
+                <ReactMarkdown>{streamingText || "…"}</ReactMarkdown>
+              </Box>
+            </Paper>
+          </Box>
         )}
 
         <div ref={bottomRef} />
-      </div>
+      </Box>
 
       {/* Quick actions */}
-      <div className="flex gap-2 px-4 py-2" style={{ borderTop: "1px solid #333" }}>
-        {[
-          { label: "🎯 Simpler", color: "#1a5c2a", prompt: "Please explain that in even simpler terms. Pretend I'm a complete beginner with no background in this topic. Use everyday language and simple analogies." },
-          { label: "📝 Example", color: "#1a4a4a", prompt: "Can you give me a concrete, real-world example of this concept? Something I might encounter in everyday life." },
-          { label: "❓ Why important", color: "#4a3a00", prompt: "Why is this concept important? What problems does it solve or what would happen without it?" },
-        ].map((btn) => (
-          <button
+      <Box sx={{ px: 2, py: 1, display: "flex", gap: 1, borderTop: "1px solid", borderColor: "divider" }}>
+        {quickActions.map((btn) => (
+          <Button
             key={btn.label}
+            size="small"
+            variant="outlined"
             disabled={streaming || history.length === 0}
             onClick={() => onSend(btn.prompt)}
-            className="text-xs px-3 py-1 rounded disabled:opacity-40 flex-1"
-            style={{ background: btn.color, color: "#e0e0e0", border: "none" }}
+            sx={{ flex: 1, fontSize: 12, borderColor: "divider", color: "text.secondary", "&:hover": { borderColor: "primary.main", color: "primary.main" } }}
           >
             {btn.label}
-          </button>
+          </Button>
         ))}
-      </div>
+      </Box>
 
-      {/* Image preview */}
+      {/* Pending image preview */}
       {pendingImage && (
-        <div className="px-4 py-2 flex items-center gap-2" style={{ borderTop: "1px solid #333" }}>
-          <img
-            src={`data:image/png;base64,${pendingImage}`}
-            alt="attachment"
-            className="rounded"
-            style={{ maxHeight: 60, maxWidth: 120, objectFit: "contain", border: "1px solid #555" }}
-          />
-          <button onClick={onClearImage} style={{ color: "#999", fontSize: 18, background: "none", border: "none", cursor: "pointer" }}>✕</button>
-        </div>
+        <>
+          <Divider />
+          <Box sx={{ px: 2, py: 1, display: "flex", alignItems: "center", gap: 1 }}>
+            <Box
+              component="img"
+              src={`data:image/png;base64,${pendingImage}`}
+              alt="attachment"
+              sx={{ maxHeight: 60, maxWidth: 120, objectFit: "contain", borderRadius: 1, border: "1px solid", borderColor: "divider" }}
+            />
+            <IconButton size="small" onClick={onClearImage} sx={{ color: "text.secondary" }}>
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          </Box>
+        </>
       )}
 
       {/* Input */}
-      <div className="px-4 py-3" style={{ borderTop: "1px solid #444" }}>
-        <div className="flex gap-2">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              onSetInput(e.target.value);
-            }}
-            onKeyDown={handleKey}
-            placeholder="Ask a question…"
-            rows={2}
-            disabled={streaming}
-            className="flex-1 rounded px-3 py-2 text-sm resize-none disabled:opacity-50"
-            style={{
-              background: "#3d3d3d",
-              color: "#e0e0e0",
-              border: "1px solid #555",
-              outline: "none",
-            }}
-          />
-          <button
-            onClick={handleSend}
-            disabled={streaming || (!input.trim() && !pendingImage)}
-            className="px-4 py-2 rounded text-sm font-medium disabled:opacity-40"
-            style={{ background: "#1a4a7a", color: "#e0e0e0", minWidth: 60 }}
-          >
-            Send
-          </button>
-        </div>
-      </div>
-    </div>
+      <Box sx={{ px: 2, py: 1.5, borderTop: "1px solid", borderColor: "divider", display: "flex", gap: 1, alignItems: "flex-end" }}>
+        <TextField
+          inputRef={inputRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKey}
+          placeholder="Ask a question…"
+          multiline
+          maxRows={4}
+          disabled={streaming}
+          fullWidth
+          size="small"
+          variant="outlined"
+        />
+        <IconButton
+          onClick={handleSend}
+          disabled={streaming || (!input.trim() && !pendingImage)}
+          color="primary"
+          sx={{ mb: 0.25 }}
+        >
+          <SendIcon />
+        </IconButton>
+      </Box>
+    </Box>
   );
 }
