@@ -19,6 +19,8 @@ import Chip from "@mui/material/Chip";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import KeyIcon from "@mui/icons-material/Key";
 import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
+import GitHubIcon from "@mui/icons-material/GitHub";
+import AppTour, { TOUR_KEY } from "@/components/AppTour";
 import ChatPanel from "@/components/ChatPanel";
 import NotesPanel from "@/components/NotesPanel";
 import SelectionPopup from "@/components/SelectionPopup";
@@ -52,6 +54,9 @@ export default function Home() {
   const [apiKey, setApiKey] = useState("");
   const [keyLoaded, setKeyLoaded] = useState(false);
 
+  // Tour
+  const [showTour, setShowTour] = useState(false);
+
   // Free tier
   const [freeTierAvailable, setFreeTierAvailable] = useState(false);
   const [freeTierLoaded, setFreeTierLoaded] = useState(false);
@@ -79,6 +84,15 @@ export default function Home() {
       .catch(() => setFreeTierAvailable(false))
       .finally(() => setFreeTierLoaded(true));
   }, [keyLoaded, apiKey]);
+
+  // Show tour once for first-time visitors, after gate is out of the way
+  useEffect(() => {
+    if (!keyLoaded || !freeTierLoaded) return;
+    const gateShowing = !apiKey && (!freeTierAvailable || quotaExhausted);
+    if (gateShowing) return;
+    if (localStorage.getItem(TOUR_KEY)) return;
+    setShowTour(true);
+  }, [keyLoaded, freeTierLoaded, apiKey, freeTierAvailable, quotaExhausted]);
 
   function handleSaveKey(key: string) {
     saveApiKey(key);
@@ -284,6 +298,7 @@ export default function Home() {
             variant="outlined"
             size="small"
             startIcon={<FolderOpenIcon />}
+            data-tour="open-pdf"
             sx={{ flexShrink: 0 }}
           >
             Open PDF
@@ -365,6 +380,19 @@ export default function Home() {
             ))}
           </Select>
 
+          <Tooltip title="View source on GitHub">
+            <IconButton
+              size="small"
+              component="a"
+              href="https://github.com/darshxm/reader-helper"
+              target="_blank"
+              rel="noopener noreferrer"
+              sx={{ color: "text.secondary" }}
+            >
+              <GitHubIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+
           {apiKey ? (
             <Tooltip title="Remove API key">
               <IconButton size="small" onClick={handleRemoveKey} sx={{ color: "text.secondary" }}>
@@ -390,7 +418,7 @@ export default function Home() {
       {/* Main area */}
       <Box sx={{ display: "flex", flex: 1, overflow: "hidden" }}>
         {/* PDF panel */}
-        <Box sx={{ width: "60%", display: "flex", flexDirection: "column", borderRight: "1px solid", borderColor: "divider" }}>
+        <Box data-tour="pdf-viewer" sx={{ width: "60%", display: "flex", flexDirection: "column", borderRight: "1px solid", borderColor: "divider" }}>
           {fileBytes ? (
             <PDFViewer
               fileBytes={fileBytes}
@@ -456,6 +484,13 @@ export default function Home() {
           hasImage={!!selection.imageBase64}
           onExplain={onExplain}
           onClose={() => setSelection(null)}
+        />
+      )}
+
+      {showTour && (
+        <AppTour
+          onActivateChat={() => setActiveTab(0)}
+          onFinish={() => setShowTour(false)}
         />
       )}
     </Box>

@@ -1,8 +1,15 @@
-// GET /api/quota — returns free tier availability and remaining message count for this IP.
-// Used by the frontend on load to decide whether to show the API key gate.
+// GET /api/quota — returns free tier availability and remaining message count.
+// Also sets the rh-uid cookie on first visit (used as second factor alongside IP).
 
 import { NextRequest, NextResponse } from "next/server";
-import { freeTierConfigured, getClientIP, peekFreeQuota, FREE_LIMIT } from "@/lib/redis";
+import {
+  freeTierConfigured,
+  getClientIP,
+  peekFreeQuota,
+  FREE_LIMIT,
+  UID_COOKIE,
+  uidCookieHeader,
+} from "@/lib/redis";
 
 export async function GET(req: NextRequest) {
   const available = freeTierConfigured();
@@ -12,11 +19,20 @@ export async function GET(req: NextRequest) {
   }
 
   const ip = getClientIP(req);
-  const quota = await peekFreeQuota(ip);
+  const existingUid = req.cookies.get(UID_COOKIE)?.value ?? null;
+  const quota = await peekFreeQuota(ip, existingUid);
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     available: true,
     remaining: quota?.remaining ?? FREE_LIMIT,
     limit: FREE_LIMIT,
   });
+
+  // Set a fresh UID cookie if the visitor doesn't have one yet
+  if (!existingUid) {
+    const newUid = crypto.randomUUID();
+    response.headers.set("Set-Cookie", uidCookieHeader(newUid));
+  }
+
+  return response;
 }

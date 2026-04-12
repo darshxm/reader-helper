@@ -183,7 +183,7 @@ export default function ChatPanel({
       </Box>
 
       {/* Quick actions */}
-      <Box sx={{ px: 2, py: 1, display: "flex", gap: 1, borderTop: "1px solid", borderColor: "divider" }}>
+      <Box data-tour="quick-actions" sx={{ px: 2, py: 1, display: "flex", gap: 1, borderTop: "1px solid", borderColor: "divider" }}>
         {quickActions.map((btn) => (
           <Button
             key={btn.label}
@@ -217,7 +217,7 @@ export default function ChatPanel({
       )}
 
       {/* Input */}
-      <Box sx={{ px: 2, py: 1.5, borderTop: "1px solid", borderColor: "divider", display: "flex", gap: 1, alignItems: "flex-end" }}>
+      <Box data-tour="chat-input" sx={{ px: 2, py: 1.5, borderTop: "1px solid", borderColor: "divider", display: "flex", gap: 1, alignItems: "flex-end" }}>
         <TextField
           inputRef={inputRef}
           value={input}

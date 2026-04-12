@@ -8,7 +8,13 @@
 import { NextRequest } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { SYSTEM_INSTRUCTION, AVAILABLE_MODELS } from "@/lib/gemini";
-import { consumeFreeMessage, freeTierConfigured, getClientIP } from "@/lib/redis";
+import {
+  consumeFreeMessage,
+  freeTierConfigured,
+  getClientIP,
+  UID_COOKIE,
+  uidCookieHeader,
+} from "@/lib/redis";
 import type { Message } from "@/lib/storage";
 
 export const runtime = "nodejs";
@@ -26,17 +32,22 @@ export async function POST(req: NextRequest) {
 
   let apiKeyToUse: string;
   let freeRemaining: number | null = null;
+  let setCookieHeader: string | null = null;
 
   if (userApiKey) {
     apiKeyToUse = userApiKey;
   } else {
-    // Free-tier path: use server key, enforced by per-IP quota
+    // Free-tier path: use server key, enforced by per-IP + per-UID quota
     if (!freeTierConfigured()) {
       return new Response(JSON.stringify({ error: "API key required" }), { status: 401 });
     }
 
     const ip = getClientIP(req);
-    const quota = await consumeFreeMessage(ip);
+    const existingUid = req.cookies.get(UID_COOKIE)?.value;
+    const uid = existingUid ?? crypto.randomUUID();
+    if (!existingUid) setCookieHeader = uidCookieHeader(uid);
+
+    const quota = await consumeFreeMessage(ip, uid);
 
     if (!quota || !quota.allowed) {
       return new Response(
@@ -134,8 +145,8 @@ export async function POST(req: NextRequest) {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
-      // Only present when using the free tier
       ...(freeRemaining !== null && { "X-Free-Remaining": String(freeRemaining) }),
+      ...(setCookieHeader && { "Set-Cookie": setCookieHeader }),
     },
   });
 }
