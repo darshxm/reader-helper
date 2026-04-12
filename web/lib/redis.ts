@@ -9,13 +9,15 @@ let _client: Redis | null = null;
 
 export function getRedisClient(): Redis | null {
   if (_client) return _client;
-  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
+  const url = process.env.UPSTASH_REDIS_REST_URL?.trim().replace(/\/$/, "");
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
+  if (!url || !token) return null;
+  try {
+    _client = new Redis({ url, token });
+  } catch (e) {
+    console.error("[redis] Failed to initialise Upstash client:", e);
     return null;
   }
-  _client = new Redis({
-    url: process.env.UPSTASH_REDIS_REST_URL,
-    token: process.env.UPSTASH_REDIS_REST_TOKEN,
-  });
   return _client;
 }
 
