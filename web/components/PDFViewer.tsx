@@ -49,16 +49,23 @@ export default function PDFViewer({
 
   const loadPdf = useCallback(async () => {
     if (!fileBytes) return;
-    const pdfjsLib = await import("pdfjs-dist");
-    const workerBlob = new Blob(
-      [`import '${location.origin}/pdf.worker.min.mjs'`],
-      { type: "application/javascript" }
-    );
-    pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(workerBlob);
-    const pdf = await pdfjsLib.getDocument({ data: fileBytes.slice() }).promise;
-    pdfRef.current = pdf;
-    onTotalPages(pdf.numPages);
-    setPdfVersion((v) => v + 1);
+    try {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      const pdf = await pdfjsLib.getDocument({ data: fileBytes.slice() }).promise;
+      pdfRef.current = pdf;
+      onTotalPages(pdf.numPages);
+      setPdfVersion((v) => v + 1);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const ua = typeof navigator !== "undefined" ? navigator.userAgent : "unknown";
+      console.error("[PDFViewer] loadPdf failed:", message);
+      fetch("/api/log-error", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ context: "PDFViewer.loadPdf", message, ua }),
+      }).catch(() => {});
+    }
   }, [fileBytes, onTotalPages]);
 
   useEffect(() => {
@@ -86,8 +93,18 @@ export default function PDFViewer({
       renderTaskRef.current = task;
       try {
         await task.promise;
-      } catch {
-        // Cancelled — ignore
+      } catch (err) {
+        // RenderingCancelledException is expected when rapidly changing pages — ignore it.
+        // Log anything else.
+        const name = err instanceof Error ? err.constructor.name : "";
+        if (name !== "RenderingCancelledException") {
+          const message = err instanceof Error ? err.message : String(err);
+          fetch("/api/log-error", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ context: "PDFViewer.render", message, ua: navigator.userAgent }),
+          }).catch(() => {});
+        }
       }
     }
     render();
