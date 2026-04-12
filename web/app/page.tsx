@@ -143,6 +143,8 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState(0);
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const mainAreaRef = useRef<HTMLDivElement | null>(null);
+  const [pdfWidth, setPdfWidth] = useState<number>(() => loadPreference("pdfWidth", 60));
 
   useEffect(() => {
     if (!errorMsg) return;
@@ -268,6 +270,34 @@ export default function Home() {
       inputRef.current.focus();
     }
     setActiveTab(0);
+  }
+
+  // ── Divider drag ─────────────────────────────────────────────────────────
+
+  function onDividerMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    const container = mainAreaRef.current;
+    if (!container) return;
+
+    function onMouseMove(ev: MouseEvent) {
+      const rect = container!.getBoundingClientRect();
+      const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+      const clamped = Math.min(Math.max(pct, 20), 80);
+      setPdfWidth(clamped);
+      savePreference("pdfWidth", clamped);
+    }
+
+    function onMouseUp() {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -416,9 +446,9 @@ export default function Home() {
       </AppBar>
 
       {/* Main area */}
-      <Box sx={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      <Box ref={mainAreaRef} sx={{ display: "flex", flex: 1, overflow: "hidden" }}>
         {/* PDF panel */}
-        <Box data-tour="pdf-viewer" sx={{ width: "60%", display: "flex", flexDirection: "column", borderRight: "1px solid", borderColor: "divider" }}>
+        <Box data-tour="pdf-viewer" sx={{ width: `${pdfWidth}%`, display: "flex", flexDirection: "column", flexShrink: 0 }}>
           {fileBytes ? (
             <PDFViewer
               fileBytes={fileBytes}
@@ -444,6 +474,20 @@ export default function Home() {
             </Box>
           )}
         </Box>
+
+        {/* Drag handle */}
+        <Box
+          onMouseDown={onDividerMouseDown}
+          sx={{
+            width: 5,
+            flexShrink: 0,
+            cursor: "col-resize",
+            bgcolor: "divider",
+            transition: "background-color 0.15s",
+            "&:hover": { bgcolor: "primary.main" },
+            "&:active": { bgcolor: "primary.main" },
+          }}
+        />
 
         {/* Right panel */}
         <Box sx={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
