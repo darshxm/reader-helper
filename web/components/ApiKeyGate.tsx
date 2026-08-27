@@ -23,8 +23,8 @@ export default function ApiKeyGate({ onSave, quotaExhausted = false }: Props) {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = value.trim();
-    if (!trimmed.startsWith("AIza")) {
-      setError("Gemini API keys start with 'AIza'. Check your key and try again.");
+    if (!trimmed) {
+      setError("Please enter your API key.");
       return;
     }
     onSave(trimmed);
